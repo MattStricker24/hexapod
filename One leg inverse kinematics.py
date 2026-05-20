@@ -1,0 +1,114 @@
+import math
+import time
+from servo import servo2040
+from servo import ServoCluster
+
+k3 = 17.0
+k2 = 7.9
+
+pins = list(range(servo2040.SERVO_1, servo2040.SERVO_18 + 1))
+servos = ServoCluster(0, 0, pins)
+servos.enable_all()
+time.sleep(1)
+
+LEG_CHANNELS = {
+    1: {"waist": 0,  "hip": 1,  "knee": 2},
+    2: {"waist": 3,  "hip": 4,  "knee": 5},
+    3: {"waist": 6,  "hip": 7,  "knee": 8},
+    4: {"waist": 9,  "hip": 10, "knee": 11},
+    5: {"waist": 12, "hip": 13, "knee": 14},
+    6: {"waist": 15, "hip": 16, "knee": 17},
+}
+
+OFFSETS = {
+    1: {"waist": -7.0, "hip": -3.0, "knee":  6.0},
+    2: {"waist":  0.0, "hip": -4.0, "knee": -6.0},
+    3: {"waist": -7.0, "hip": -3.0, "knee": -5.0},
+    4: {"waist":  2.0, "hip": -9.0, "knee":  5.0},
+    5: {"waist": -9.0, "hip": -3.0, "knee":  3.0},
+    6: {"waist":  4.0, "hip":  0.0, "knee":  9.0},
+}
+
+WAIST_MIN = -60.0
+WAIST_MAX = 60.0
+HIP_MIN = -90.0
+HIP_MAX = 45.0
+KNEE_MIN = 0.0
+KNEE_MAX = 155.0
+
+STAND = {
+    1: (0.0, 6.0, -15.0),
+    2: (0.0, 6.0, -15.0),
+    3: (0.0, 6.0, -15.0),
+    4: (0.0, 6.0, -15.0),
+    5: (0.0, 6.0, -15.0),
+    6: (0.0, 6.0, -15.0),
+}
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+def ik_leg(A, B, C):
+    j1 = math.atan2(A, B)
+    L = min(math.sqrt(A*A + B*B + C*C), k2 + k3)
+
+    arg_j3 = (k2*k2 + k3*k3 - L*L) / (2.0 * k2 * k3)
+    arg_j3 = clamp(arg_j3, -1.0, 1.0)
+    j3 = math.acos(arg_j3)
+
+    proj = math.sqrt(A*A + B*B)
+    arg_b = (L*L + k2*k2 - k3*k3) / (2.0 * L * k2) if L != 0 else 1.0
+    arg_b = clamp(arg_b, -1.0, 1.0)
+    b = math.acos(arg_b)
+
+    a = math.atan(C/ -proj)
+
+    j2 = b - a
+
+    return j1, j2, j3, a, b, L
+
+def move_leg(leg, A, B, C):
+    j1, j2, j3, a, b, L = ik_leg(A, B, C)
+
+    waist_deg = clamp(math.degrees(j1) + OFFSETS[leg]["waist"], WAIST_MIN, WAIST_MAX)
+    hip_deg = clamp(math.degrees(j2) + OFFSETS[leg]["hip"], HIP_MIN, HIP_MAX)
+    knee_deg = clamp((180 - math.degrees(j3)) + OFFSETS[leg]["knee"], KNEE_MIN, KNEE_MAX)
+
+    servos.to_percent(LEG_CHANNELS[leg]["waist"], waist_deg, -90, 90, load=False)
+    servos.to_percent(LEG_CHANNELS[leg]["hip"], hip_deg, -90, 90, load=False)
+    servos.to_percent(LEG_CHANNELS[leg]["knee"], knee_deg, 0, 180, load=False)
+    servos.load()
+
+def stand_all():
+    for leg in range(1, 7):
+        A, B, C = STAND[leg]
+        move_leg(leg, A, B, C)
+
+stand_all()
+print("All legs standing with offsets applied.")
+print("Enter: leg A B C (or q)")
+
+while True:
+    s = input("leg A B C (or q): ").strip()
+    if s.lower() in ("q", "quit", "exit"):
+        break
+
+    parts = s.replace(",", " ").split()
+    if len(parts) != 4:
+        print("Enter exactly 4 values: leg A B C.")
+        continue
+
+    try:
+        leg = int(parts[0])
+        A, B, C = map(float, parts[1:])
+    except ValueError:
+        print("Invalid input.")
+        continue
+
+    if leg not in LEG_CHANNELS:
+        print("Leg must be 1 through 6.")
+        continue
+
+    move_leg(leg, A, B, C)
+
+servos.disable_all()
